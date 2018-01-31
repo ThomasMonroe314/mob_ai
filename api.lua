@@ -4,7 +4,7 @@ mob_ai.registered_drivers = {}
 --returns node def
 local function get_node(pos,fallback)
 	
-	fallback = fallback or "default:dirt"
+	fallback = fallback or "air"
 
 	local node = minetest.get_node_or_nil(pos)
 
@@ -127,6 +127,7 @@ function mob_ai.on_step(self,dtime)
 	if self.timer > 0 then
 		self.timer = self.timer - dtime
 		if self.timer < 0 then
+			if self.driver_funcs.on_timer then self.driver_funcs.on_timer(self) end
 			self.inputs.timer = true
 		end
 	end
@@ -166,7 +167,15 @@ function mob_ai.on_step(self,dtime)
 	--Do driver
 	self.driver_funcs.step(self,dtime)
 	--Check inputs
-	get_obj_inputs(self)	
+	self.input_timer = self.input_timer - dtime
+	if self.input_timer <= 0 then
+		local food = self:get_food()
+		if food and food.x then
+			self.inputs.found_food = food
+		end
+		get_obj_inputs(self)
+		self.input_timer = 1
+	end
 	check_inputs(self)
 	--Calculate Gravity
 	gravity(self)
@@ -219,6 +228,7 @@ function mob_ai.on_activate(self,staticdata,dtimes)
 			self[var] = val
 		end
 	end
+	self.inputs = {}
 	self.object:set_armor_groups({fleshy = 100})
 	self.driver_funcs = mob_ai.registered_drivers[self.driver]
 	self.driver_funcs.start(self,"startup",nil)
@@ -284,6 +294,24 @@ local function set_animation(self,animation)
 	self.anim = animation
 end
 
+local function get_food(self)
+	local food = {}
+	for item,_ in pairs(self.food_nodes) do
+		food[#food+1] = item
+	end
+	local node = minetest.find_node_near(self.object:get_pos(),self.reach,food)
+	if node then
+		return node
+	end
+end
+
+local function eat(self,pos)
+	local node = get_node(pos)
+	if self.food_nodes[node.name] then
+		minetest.set_node(pos,{name=self.food_nodes[node.name]})
+	end
+end
+
 function mob_ai.register_mob(name,def)
 	local definition = {
 		--Builtin Entity definitions
@@ -313,6 +341,7 @@ function mob_ai.register_mob(name,def)
 		script                 = def.script,
 		on_die                 = def.on_die,
 		damage                 = def.damage or 3,
+		food_nodes             = def.food_nodes or {},
 		
 		--Physics vars
 		float                  = def.float or true,
@@ -338,12 +367,15 @@ function mob_ai.register_mob(name,def)
 		target                 = nil,
 		velocity               = 0,
 		anim                   = "",
+		input_timer            = 0,
 
 		--helper functions
 		set_yaw                = set_yaw,
 		set_velocity           = set_velocity,
 		set_animation          = set_animation,
 		get_velocity           = get_velocity,
+		get_food               = get_food,
+		eat                    = eat,
 	}
 	for driver,_ in pairs(definition.script) do
 		if mob_ai.registered_drivers[driver].custom_vars ~= nil then
